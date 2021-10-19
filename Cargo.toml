@@ -13,4 +13,4 @@ syn = "1.0"
 quote = "1.0"
 bincode = "1.3"
 serde = "1.0"
-cubeos-error = { git = "https://github.com/Cube-OS/cubeOS-error.git"}
+cubeOS-error = { git = "https://github.com/Cube-OS/cubeos-error.git"}
