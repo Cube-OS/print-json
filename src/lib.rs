@@ -3,8 +3,6 @@ extern crate syn;
 extern crate quote;
 use proc_macro::TokenStream;
 use quote::*;
-use std::error::Error;
-// use cubeos_error::*;
 
 #[proc_macro_derive(DeserializeSized)]
 pub fn deserialize_sized_derive(input: TokenStream) -> TokenStream {
