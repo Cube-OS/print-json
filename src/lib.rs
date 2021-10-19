@@ -20,17 +20,12 @@ fn impl_deserialize_sized(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
     let gen = quote! {
         impl DeserializeSized for #name where {
-            fn deserialize_sized(array: &[u8], sized: std::option::Option<usize>) -> DeResult<Self> where Self:Sized {
-                match sized {
-                    Some(l) => {
-                        if array.len() != l {
-                            Err(DError::Deserialize)
-                        } else {
-                            Ok(bincode::deserialize(array).unwrap())
-                        }                        
-                    }
-                    None => Ok(bincode::deserialize(array).unwrap())
-                }
+            fn deserialize_sized(array: &[u8]) -> Result<Self> where Self:Sized {
+                if array.len() != size_of::<#name>() {
+                    Err(CubeOSError::WrongNoArgs)
+                } else {
+                    Ok(bincode::deserialize(array).unwrap())
+                }   
             }
         }
     };
