@@ -20,7 +20,7 @@ fn impl_deserialize_sized(ast: &syn::DeriveInput) -> TokenStream {
         impl DeserializeSized for #name where {
             fn deserialize_sized(array: &[u8]) -> Result<Self> where Self:Sized {
                 if array.len() != size_of::<#name>() {
-                    Err(CubeOSError::WrongNoArgs)
+                    Err(Error::WrongNoArgs)
                 } else {
                     Ok(bincode::deserialize(array).unwrap())
                 }   
