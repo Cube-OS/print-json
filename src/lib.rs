@@ -8,7 +8,6 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::*;
 use std::str::FromStr;
-use std::any::TypeId;
 
 #[proc_macro_derive(Ground)]
 pub fn ground_derive(input: TokenStream) -> TokenStream {
@@ -25,8 +24,6 @@ pub fn ground_derive(input: TokenStream) -> TokenStream {
             let gqlname = TokenStream2::from_str(&name2).unwrap();            
             let mut out_extend = quote!();
             let mut from_extend = quote!();
-            // if let syn::Fields::Named(FieldsNamed{named,..}) = &e.variants.first().unwrap().fields {
-            //     for v in named.iter().map(|f| &f.ident) {
             for variant in e.variants.iter() {
                 let v = &variant.ident;
                 out_extend.extend::<TokenStream2>(quote!{
@@ -57,27 +54,25 @@ pub fn ground_derive(input: TokenStream) -> TokenStream {
     };
 
     // Build the trait implementation
-    impl_ground(&name,&fields,output)
+    impl_ground(&name,&fields)
 }
 
-fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields, tok: TokenStream) -> TokenStream {
-    // let name = &ast.ident;    
-    // let data = &ast.data;    
-    let input = tok.to_string();
+fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields) -> TokenStream {
     let name2 = format!("Gql{}",name);
 
     let gqlname = TokenStream2::from_str(&name2).unwrap();
 
     let mut strukt_stream = TokenStream2::default();
     let mut from_stream = TokenStream2::default();
+    let mut tuple_stream = TokenStream2::default();
 
     if let syn::Fields::Named(FieldsNamed{named, .. }) = syn_fields {
         let fields = named.iter().map(|f| &f.ident);
         let ftypes = named.iter().map(|f| &f.ty);
 
-        for ft in ftypes.clone().into_iter() {
-            println!{"{:?}",ft};
-        }
+        // for ft in ftypes.clone().into_iter() {
+        //     println!{"{:?}",ft};
+        // }
 
         for (field, ftype) in fields.into_iter().zip(ftypes.into_iter()) {
             strukt_stream.extend::<TokenStream2>(
@@ -86,18 +81,23 @@ fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields, tok: TokenStream) ->
             from_stream.extend::<TokenStream2>(
                 quote!{#field: }
             );
-            let (strukt_extend,from_extend) = match_types(field,ftype);
+            let (strukt_extend,from_extend,tuple_extend) = match_types(field,ftype);
             strukt_stream.extend::<TokenStream2>(
                 quote!{#strukt_extend,}
             );
             from_stream.extend::<TokenStream2>(
                 quote!{#from_extend,}
             );
+            tuple_stream.extend::<TokenStream2>(
+                tuple_extend
+            )
         }
     }
 
     let gen = quote! {
         use juniper::*;
+
+        #tuple_stream
 
         #[derive(GraphQLObject)]
         pub struct #gqlname {
@@ -120,9 +120,10 @@ fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields, tok: TokenStream) ->
 fn match_types(
     field: &Option<syn::Ident>,
     ftype: &syn::Type,
-) -> (TokenStream2, TokenStream2) {
+) -> (TokenStream2, TokenStream2, TokenStream2) {
     let mut strukt_stream_extend = TokenStream2::default();
     let mut from_stream_extend = TokenStream2::default();
+    let mut tuple_stream_extend = TokenStream2::default();
 
     match ftype {
         Type::Path(type_path) => {
@@ -188,7 +189,7 @@ fn match_types(
                     from_stream_extend = quote!{n.#field.to_string()};
                 }
                 "Vec" => {                   
-                    let (gqltyp,_) = match &type_path.clone().path.segments.first().unwrap().arguments{
+                    let (gqltyp,_,_) = match &type_path.clone().path.segments.first().unwrap().arguments{
                         PathArguments::AngleBracketed(a) => match a.args.first().unwrap() {
                             GenericArgument::Type(f) => match_types(field,f),     
                             _ => todo!(),                       
@@ -208,42 +209,54 @@ fn match_types(
                 }
                 _ => {        
                     let f = type_path.clone().into_token_stream();
-                    println!("{:?}",f);
                     let name2 = format!("Gql{}",f);
                     let gqlname = TokenStream2::from_str(&name2).unwrap();          
                     strukt_stream_extend = quote!{#gqlname};
                     from_stream_extend = quote!{n.#field.into()};
                 }                
-            }
-            // match type_path.clone().into_token_stream().to_string().as_str() {
-            //     "u8" => {
-            //         strukt_stream_extend = quote!{i32};
-            //         from_stream_extend = quote!{n.#field.into()};
-            //     }
-            //     
-            //     x => {
-            //         strukt_stream_extend = quote!{#x};
-            //         from_stream_extend = quote!{n.#field.into()};
-            //     }
-            // }            
+            }      
         }
-        /// Tuple Type not implemented in GraphQL Object
-        /// Convert tuple to struct 
-        /// TODO!!!
-        // Type::Tuple(type_tuple) => {
-        //     from_stream_extend = quote!{n.#field.into()};
-        //     let mut gqltyp = TokenStream2::default();
-        //     for elem in type_tuple.elems.iter() {
-        //         gqltyp.extend::<TokenStream2>(
-        //             match_types(field,elem).0
-        //         );                
-        //         gqltyp.extend::<TokenStream2>(quote!{,})
-        //     }
-        //     strukt_stream_extend = quote!((#gqltyp));
-        // }
+        // Tuple Type not implemented in GraphQL Object
+        // Convert tuple to struct 
+        // TODO!!!
+        Type::Tuple(type_tuple) => {
+            from_stream_extend = quote!{n.#field.into()};            
+            let mut gqlfields = TokenStream2::default();
+            let mut elements = TokenStream2::default();
+            let mut from_tuple = TokenStream2::default();
+            let mut i: usize = 0;
+            for elem in type_tuple.elems.iter() {
+                let (gqlfield,_,_) = match_types(field,elem);
+                gqlfields.extend::<TokenStream2>(TokenStream2::from_str(&format!("t_{}: {}",i,gqlfield)).unwrap());                                
+                elements.extend::<TokenStream2>(quote!{#elem});
+                if Some(elem) != type_tuple.elems.last() {
+                    gqlfields.extend::<TokenStream2>(quote!{,});
+                    elements.extend::<TokenStream2>(quote!{,});
+                }
+                // let tunder = TokenStream2::from_str(&format!("t_{}:",i)).unwrap();
+                // let tdot = TokenStream2::from_str(&format!("t.{}",i)).unwrap();
+                from_tuple.extend::<TokenStream2>(TokenStream2::from_str(&format!("t_{}: t.{}.into(),",i,i)).unwrap());
+                i = i+1;
+            }
+            let gqlstruct = TokenStream2::from_str(&format!("Gql{}",field.clone().unwrap().to_string())).unwrap();            
+            strukt_stream_extend = quote!{#gqlstruct};
+            tuple_stream_extend = quote!{
+                #[derive(GraphQLObject)]
+                pub struct #gqlstruct {
+                    #gqlfields
+                }
+                impl From<(#elements)> for #gqlstruct {
+                    fn from(t: (#elements)) -> #gqlstruct {
+                        #gqlstruct {
+                            #from_tuple
+                        }
+                    }
+                }
+            };
+        }
         Type::Array(type_array) => {          
             let typ = &type_array.elem;
-            let (gqltyp,_) = match_types(field,typ);
+            let (gqltyp,_,_) = match_types(field,typ);
             strukt_stream_extend = quote!{Vec<#gqltyp>};
             if let syn::Expr::Lit(expr_lit) = &type_array.len {
                 from_stream_extend = quote!{
@@ -259,5 +272,5 @@ fn match_types(
         }
         _ => {}                    
     };
-    (strukt_stream_extend,from_stream_extend)
+    (strukt_stream_extend,from_stream_extend,tuple_stream_extend)
 }
