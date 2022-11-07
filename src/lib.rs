@@ -218,7 +218,6 @@ fn match_types(
         }
         // Tuple Type not implemented in GraphQL Object
         // Convert tuple to struct 
-        // TODO!!!
         Type::Tuple(type_tuple) => {
             from_stream_extend = quote!{n.#field.into()};            
             let mut gqlfields = TokenStream2::default();
