@@ -95,11 +95,11 @@ fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields) -> TokenStream {
     }
 
     let gen = quote! {
-        use juniper::*;
+        use juniper::GraphQLObject;
 
         #tuple_stream
 
-        #[derive(GraphQLObject)]
+        #[derive(GraphQLObject,Deserialize,Serialize)]
         pub struct #gqlname {
             #strukt_stream
         }
@@ -137,7 +137,7 @@ fn match_types(
                     from_stream_extend = quote!{n.#field.into()};
                 }
                 "u32" => {
-                    strukt_stream_extend = quote!{i32};
+                    strukt_stream_extend = quote!{f64};
                     from_stream_extend = quote!{n.#field.into()};
                 }
                 "u64" => {
