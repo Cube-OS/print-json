@@ -95,8 +95,6 @@ fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields) -> TokenStream {
     }
 
     let gen = quote! {
-        use juniper::GraphQLObject;
-
         #tuple_stream
 
         #[derive(GraphQLObject,Deserialize,Serialize)]
