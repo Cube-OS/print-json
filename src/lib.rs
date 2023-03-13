@@ -13,6 +13,7 @@ use std::str::FromStr;
 use std::marker::PhantomData;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::fmt::Display;
 
 // struct ItemStruct {
 //     struct_token: Token![struct],
@@ -43,7 +44,8 @@ pub fn ground_handle(tokens: TokenStream) -> TokenStream {
     for l in 0..length/2 {
         let int = args.pop().unwrap().into_value();
         let int2 = &int.path.segments.first().unwrap().ident.to_string();
-        msg.insert(0,quote!{println!("{}",format!("{}",#int2));});
+        // msg.insert(0,quote!{println!("{}",format!("{}",#int2));});
+        msg.insert(0,quote!{print!("{} ",#int2);});
     }
 
     if !args.is_empty() {
@@ -86,7 +88,9 @@ pub fn ground_handle(tokens: TokenStream) -> TokenStream {
 }
 
 fn type_stream(token: TokenStream2, arg_i: TokenStream2) -> TokenStream2 {
+    let t: String = quote!(#token).to_string();
     let r = quote!{
+        println!("[{}]:",#t);
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
         let #arg_i = serde_json::from_str::<#token>(&input).unwrap();
