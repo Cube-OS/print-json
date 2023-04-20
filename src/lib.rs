@@ -228,6 +228,22 @@ fn match_types_func(
             arg_stream_extend = quote!(#arg_i);
             stream_extend = type_stream(ident,arg_i);
         }
+        "Option" => {                   
+            let (stream,cmd,arg) = match &ftype.clone().path.segments.first().unwrap().arguments{
+                PathArguments::AngleBracketed(a) => match a.args.first().unwrap() {
+                    GenericArgument::Type(t) => match t {
+                        Type::Path(f) => match_types_func(f,arg_i.clone()),
+                        _ => todo!(),
+                    },
+                    _ => todo!(),                       
+                }                        
+                _ => todo!(),
+            };
+            let ident = TokenStream2::from_str(&format!("Option<{}>",cmd)).unwrap();
+            cmd_stream_extend = ident.clone();
+            arg_stream_extend = quote!(#arg_i);
+            stream_extend = type_stream(ident,arg_i);
+        }
         ident => {             
             let ident = TokenStream2::from_str(ident).unwrap();
             cmd_stream_extend = quote!(#ident);
