@@ -28,14 +28,10 @@ pub fn print_json(input: TokenStream) -> TokenStream {
     let input = input.replace(",,", ",");
     let mut vec_str: Vec<String> = input.split(";").map(|s| s.to_string()).collect();
     vec_str.pop();
-    for v in &vec_str {
-        println!("{}", v);
-    }
 
     let mut enumstruct = String::new();
     let mut commands = String::new();
-    for mut v in vec_str {  
-        println!("v: {}", v);      
+    for mut v in vec_str {       
         let mut input = TokenStream::from_str(&v).unwrap();
         let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
         let mut args = parser.parse(input).unwrap();
@@ -43,7 +39,6 @@ pub fn print_json(input: TokenStream) -> TokenStream {
         let mut vec = args.into_iter().collect::<Vec<_>>();      
         
         let mut command = "# struct ".to_string();
-        println!("{:?}", command);
         
         command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
         
@@ -69,8 +64,7 @@ pub fn print_json(input: TokenStream) -> TokenStream {
     }
     
     commands.push_str(&format!("{}\n", remove_duplicates(&enumstruct)));
-    println!("{}", commands);
-    // println!("{}", enumstruct);
+    // println!("{}", commands);
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -99,7 +93,6 @@ fn remove_duplicates(s: &str) -> String {
                 }
             }
             Item::Enum(item_enum) => {
-                println!("{:?}",item_enum.ident.to_string());
                 if seen.insert(item_enum.ident.to_string()) {
                     unique_items.push(item);
                 }
@@ -107,8 +100,6 @@ fn remove_duplicates(s: &str) -> String {
             _ => {}
         }
     }
-
-    println!("{:?}",seen);
 
     let mut output = String::new();
     for item in &unique_items {
@@ -127,7 +118,6 @@ fn arguments(path: TypePath) -> (String,Option<String>) {
 
 fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Option<String>,Option<String>) {
     let depth = depth + 1;
-    println!("{}", type_path.clone().path.segments.first().unwrap().ident.to_string());
     match type_path.clone().path.segments.first().unwrap().ident.to_string().as_str() {
         "u8" => {
             (Some(format!("u8")),None)
@@ -201,29 +191,22 @@ fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Op
 }
 
 fn recursive_find_path(use_path: &UsePath, ident: &Ident) -> Option<String> {
-    // println!("{} {}",use_path.ident,ident);
     if use_path.ident == *ident {
-        // println!("found path: {}",use_path.to_token_stream().to_string());
         Some(use_path.to_token_stream().to_string())
     } else {
-        if let use_tree = use_path.tree.as_ref() {
-            // println!("tree: {}",use_tree.to_token_stream().to_string());
-            // println!("{:?}",use_tree);
+        if let use_tree = use_path.tree.as_ref() {            
             match use_tree {
                 UseTree::Path(use_path) => recursive_find_path(use_path, ident),
                 UseTree::Name(use_name) => {
-                    if use_name.ident == *ident {
-                        // println!("found path: {}",use_name.to_token_stream().to_string());
+                    if use_name.ident == *ident {                        
                         Some(use_name.to_token_stream().to_string())
-                    } else {
-                        // println!("not found");
+                    } else {                        
                         None
                     }
                 }
                 _ => None,
             }
         } else {
-            // println!("no tree");
             None
         }        
     }
@@ -249,24 +232,18 @@ fn find_path(file_ast: syn::File, ident: &Ident) -> Option<String> {
 fn find_struct_or_enum_definition(ident: &Ident) -> Option<Item> {
     // Get the file path of the current module - fix this to /src/service.rs for now
     let module_path = std::path::Path::new(&std::env::current_dir().unwrap()).join("src").join("service.rs");
-    // println!("{:?}",module_path);
     let file_content = std::fs::read_to_string(module_path).unwrap();    
     // Parse the file into a Syn abstract syntax tree (AST)
     let file_ast = syn::parse_file(&file_content).unwrap();
-    // println!("file_ast: {:?}",file_ast);
 
     match find_path(file_ast.clone(), ident) {
         Some(path) => {
-            // println!("path: {}",path);
             if path.contains("crate ::") {
                 let path = path.split("::").collect::<Vec<&str>>();
-                let krate = path[path.len()-2];                
-                // println!("{}",krate);
+                let krate = path[path.len()-2];                                
                 let module_path = std::path::Path::new(&std::env::current_dir().unwrap()).join("src").join((String::from(krate)+".rs").replace(" ",""));
-                // println!("{:?}",module_path);
                 let file_content = std::fs::read_to_string(module_path).unwrap();
                 let file_ast = syn::parse_file(&file_content).unwrap();
-                // println!("here");
                 
                 for item in file_ast.items {
                     match item {
@@ -299,7 +276,6 @@ fn find_in_git(package: &Package, ident: &syn::Ident) -> Option<Item> {
     // Get path to git dependency crate
     let directory = package.manifest_path.parent().unwrap().as_std_path();
 
-    // println!("searching in: {:?}",directory);
     match search_files(&directory, ident) {
         Ok(item) => Some(item),
         Err(_) => None,
@@ -320,7 +296,6 @@ fn search_files(directory: &std::path::Path, ident: &syn::Ident) -> std::result:
                 return Ok(item);
             }
         } else if path.extension().map(|ext| ext == "rs").unwrap_or(false) {
-            // println!("searching in: {:?}",path);
             // Parse source files
             let file_content = std::fs::read_to_string(path.clone())?;
             let file_ast = syn::parse_file(&file_content)?;
@@ -329,13 +304,11 @@ fn search_files(directory: &std::path::Path, ident: &syn::Ident) -> std::result:
                 match item {
                     Item::Struct(item_struct) => {
                         if item_struct.ident == *ident {
-                            // println!("found in: {:?}",path);
                             return Ok(Item::Struct(item_struct));
                         }
                     },
                     Item::Enum(item_enum) => {
                         if item_enum.ident == *ident {
-                            // println!("found in: {:?}",path);
                             return Ok(Item::Enum(item_enum));
                         }
                     },
@@ -361,7 +334,6 @@ fn read_from_git_dependency(package_name: Option<String>, ident: &syn::Ident) ->
         if package_name.is_some() && package.name != package_name.clone().unwrap() {
             continue;
         }
-        // println!("package: {:?}",package.name);
         match find_in_git(&package, ident) {
             Some(item) => return Some(item),
             None => (),
