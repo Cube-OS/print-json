@@ -42,7 +42,7 @@ pub fn print_json(input: TokenStream) -> TokenStream {
 
         let mut vec = args.into_iter().collect::<Vec<_>>();      
         
-        let mut command = "# ".to_string();
+        let mut command = "# struct ".to_string();
         println!("{:?}", command);
         
         command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
@@ -62,7 +62,7 @@ pub fn print_json(input: TokenStream) -> TokenStream {
         if !json.is_empty() {
             command.push_str(&format!(" {{\n{}}}\n", json));
         } else {
-            command.push_str(": {}\n");
+            command.push_str(" {}\n");
         }
 
         commands.push_str(&format!("{}\n", command));
@@ -74,7 +74,8 @@ pub fn print_json(input: TokenStream) -> TokenStream {
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open("commands.json")
         .expect("Failed to open file");
 
