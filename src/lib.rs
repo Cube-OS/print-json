@@ -1,9 +1,5 @@
-extern crate proc_macro2;
-extern crate proc_macro;
-extern crate syn;
-extern crate quote;
-
 use syn::*;
+use syn::spanned::Spanned;
 use syn::punctuated::Punctuated;
 use syn::parse::Parser;
 use proc_macro::TokenStream;
@@ -14,505 +10,346 @@ use std::marker::PhantomData;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::fmt::Display;
-
-// struct ItemStruct {
-//     struct_token: Token![struct],
-//     ident: Ident,
-//     brace_token: token::Brace,
-//     fields: Punctuated<Field, Token![,]>,
-// }
+use cargo_metadata::*;
+use std::fs;
+use std::io::Write;
+use serde_json::{json, to_string_pretty};
 
 #[proc_macro]
-pub fn ground_handle(tokens: TokenStream) -> TokenStream {
-    // 
-    //     $types, $($cmd),*
-    // 
-    let input = tokens.clone();
+pub fn print_json(input: TokenStream) -> TokenStream {
+
     let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
-    let mut args = parser.parse(tokens).unwrap();
-    let mut i: usize = 0;
+    let mut args = parser.parse(input).unwrap();
 
-    let mut stream = TokenStream2::default();
-    let mut cmd_stream = TokenStream2::default();
-    let mut arg_stream = TokenStream2::default();
-
-    let typ = args.pop().unwrap().into_value();
-    let id = &typ.path.segments.first().unwrap().ident;
-
-    let mut msg: Vec<TokenStream2> = Vec::new();
-    let length = args.len();
-    for l in 0..length/2 {
-        let int = args.pop().unwrap().into_value();
-        let int2 = &int.path.segments.first().unwrap().ident.to_string();
-        // msg.insert(0,quote!{println!("{}",format!("{}",#int2));});
-        msg.insert(0,quote!{print!("{} ",#int2);});
+    let mut vec = args.into_iter().collect::<Vec<_>>();
+    
+    let mut command = vec.remove(0).path.segments.first().unwrap().ident.to_string();
+    
+    let (name, typ): (Vec<_>,Vec<_>) = vec.into_iter().enumerate().partition(|(i, _)| i % 2 == 0);
+    
+    let mut json = String::new();
+    for ((_,n),(_,t)) in name.into_iter().zip(typ.into_iter()) {
+        json.push_str(&format!("\t{}: ", n.path.segments.first().unwrap().ident.to_string()));
+        json.push_str(&format!("{}\n", arguments(t)));        
     }
-
-    if !args.is_empty() {
-        for a in args.iter() {
-            let arg_i = TokenStream2::from_str(&format!("arg_{}",i)).unwrap();
-            let (stream_ext, cmd_stream_ext, arg_stream_ext) = match_types_func(a,arg_i);
-            let m = &msg[i];
-            stream.extend::<TokenStream2>(quote!(#m));
-            stream.extend::<TokenStream2>(quote!(#stream_ext));
-            if i > 0 {
-                cmd_stream.extend::<TokenStream2>(quote!(,#cmd_stream_ext));
-                arg_stream.extend::<TokenStream2>(quote!(,#arg_stream_ext));
-            } else {
-                cmd_stream.extend::<TokenStream2>(quote!(#cmd_stream_ext));
-                arg_stream.extend::<TokenStream2>(quote!(#arg_stream_ext));
-            }            
-            i = i+1;
-        }    
-        stream.extend::<TokenStream2>(quote!(
-            let cmd = match Command::<CommandID,(#cmd_stream)>::serialize(CommandID::#id,(#arg_stream)) {
-                Ok(cmd) => cmd,
-                Err(e) => return serde_json::to_string_pretty(&e).unwrap(),
-            };
-        ))
+    
+    if !json.is_empty() {
+        command.push_str(&format!(": {{\n{}}}\n", json));
     } else {
-        stream.extend::<TokenStream2>(quote!{
-            let cmd = match Command::<CommandID,()>::serialize(CommandID::#id,()) {
-                Ok(cmd) => cmd,
-                Err(e) => return serde_json::to_string_pretty(&e).unwrap(),
-            };
-        });
+        command.push_str(": {}\n");
     }
 
-    let gen = quote!{
-        #stream
-    };
-    println!("{}",gen);
-    println!("");
-    gen.into()
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("commands.json")
+        .expect("Failed to open file");
+
+    write!(file, "{}", command).expect("Failed to write to file");
+
+    TokenStream::new()
 }
 
-fn type_stream(token: TokenStream2, arg_i: TokenStream2) -> TokenStream2 {
-    let t: String = quote!(#token).to_string();
-    let r = quote!{
-        println!("[{}]:",#t);
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input).unwrap();
-        let #arg_i = serde_json::from_str::<#token>(&input).unwrap();
-    };
-    r
+// #[proc_macro]
+fn arguments(path: TypePath) -> String {
+    let depth: usize = 0;
+    if let Some(t) = match_name(&path,depth) {
+        t.into()
+    } else {
+        "()".to_string()
+    }
 }
 
-fn handle_enum(ident: TokenStream2, arg_i: TokenStream2) -> TokenStream2 {
-    let stream = quote!{
-        let mut items: Vec<#ident> = Vec::new();
-        for field in #ident::iter() {
-            items.push(field);
-        }
-        let #arg_i = match Select::new().items(&items).interact_opt().unwrap() {
-            Some(index) => items[index].clone(),
-            None => items[0].clone(),
-        };  
-    };
-    stream
-}
-
-fn match_types_func(
-    ftype: &syn::TypePath,
-    arg_i: TokenStream2,
-) -> (TokenStream2, TokenStream2, TokenStream2) {
-    let mut stream_extend = TokenStream2::default();
-    let mut cmd_stream_extend = TokenStream2::default();
-    let mut arg_stream_extend = TokenStream2::default();
-    // let mut tuple_stream_extend = TokenStream2::default();
-
-    match ftype.clone().path.segments.first().unwrap().ident.to_string().as_str() {
+fn match_name(type_path: &TypePath, depth: usize) -> Option<String> {
+    let depth = depth + 1;
+    match type_path.clone().path.segments.first().unwrap().ident.to_string().as_str() {
         "u8" => {
-            let token = TokenStream2::from_str("u8").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);                    
+            Some(format!("u8"))
         }
         "u16" => {
-            let token = TokenStream2::from_str("u16").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("u16"))
         }
         "u32" => {
-            let token = TokenStream2::from_str("u32").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("u32"))
         }
         "u64" => {
-            let token = TokenStream2::from_str("u64").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("u64"))
         }
         "i8" => {
-            let token = TokenStream2::from_str("i8").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("i8"))
         }
         "i16" => {
-            let token = TokenStream2::from_str("i16").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("i16"))
         }
         "i32" => {
-            let token = TokenStream2::from_str("i32").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("i32"))
         }
         "i64" => {
-            let token = TokenStream2::from_str("i64").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
-        }
-        "usize" => {
-            let token = TokenStream2::from_str("usize").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
-        }
-        "isize" => {
-            let token = TokenStream2::from_str("isize").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("i64"))
         }
         "f32" => {
-            let token = TokenStream2::from_str("f32").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("f32"))
         }
         "f64" => {
-            let token = TokenStream2::from_str("f64").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
-        }
-        "bool" => {
-            let token = TokenStream2::from_str("bool").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("f64"))
         }
         "String" => {
-            let token = TokenStream2::from_str("String").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+            Some(format!("String"))
         }
-        "str" => {
-            let token = TokenStream2::from_str("str").unwrap();
-            cmd_stream_extend = quote!(#token);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = type_stream(token,arg_i);
+        "bool" => {
+            Some(format!("bool"))
         }
-        "Vec" => {                   
-            let (stream,cmd,arg) = match &ftype.clone().path.segments.first().unwrap().arguments{
+        "Vec" => {
+            let arg = match &type_path.clone().path.segments.first().unwrap().arguments{
                 PathArguments::AngleBracketed(a) => match a.args.first().unwrap() {
                     GenericArgument::Type(t) => match t {
-                        Type::Path(f) => match_types_func(f,arg_i.clone()),
+                        Type::Path(f) => match_name(f,depth),
                         _ => todo!(),
                     },
                     _ => todo!(),                       
                 }                        
                 _ => todo!(),
             };
-            let ident = TokenStream2::from_str(&format!("Vec<{}>",cmd)).unwrap();
-            cmd_stream_extend = ident.clone();
-            arg_stream_extend = quote!(#arg_i);
-            stream_extend = type_stream(ident,arg_i);
+            Some(format!("Vec<{}>",arg.unwrap()))
         }
-        "Option" => {                   
-            let (stream,cmd,arg) = match &ftype.clone().path.segments.first().unwrap().arguments{
+        "Option" => {
+            let arg = match &type_path.clone().path.segments.first().unwrap().arguments{
                 PathArguments::AngleBracketed(a) => match a.args.first().unwrap() {
                     GenericArgument::Type(t) => match t {
-                        Type::Path(f) => match_types_func(f,arg_i.clone()),
+                        Type::Path(f) => match_name(f,depth),
                         _ => todo!(),
                     },
                     _ => todo!(),                       
                 }                        
                 _ => todo!(),
             };
-            let ident = TokenStream2::from_str(&format!("Option<{}>",cmd)).unwrap();
-            cmd_stream_extend = ident.clone();
-            arg_stream_extend = quote!(#arg_i);
-            stream_extend = type_stream(ident,arg_i);
+            Some(format!("Option<{}>",arg.unwrap()))
         }
-        ident => {             
-            let ident = TokenStream2::from_str(ident).unwrap();
-            cmd_stream_extend = quote!(#ident);
-            arg_stream_extend = quote!{#arg_i};
-            stream_extend = handle_enum(ident,arg_i);
-        },                  
-    };
-    (stream_extend,cmd_stream_extend,arg_stream_extend)
+        id => {
+            let id: TokenStream2 = id.parse().unwrap();
+            handle_ident(id,depth)
+        }
+    }   
 }
 
-#[proc_macro_derive(Ground)]
-pub fn ground_derive(input: TokenStream) -> TokenStream {
-    // Construct a representation of Rust code as a syntax tree
-    // that we can manipulate
-    let output = input.clone();
-    let ast: syn::DeriveInput = syn::parse(input).unwrap();
-    let name = &ast.ident;
-    let strukt = &ast.data;
-    let fields = match strukt {
-        syn::Data::Struct(d) => &d.fields,
-        syn::Data::Enum(e) => {
-            let name2 = format!("Gql{}",name);
-            let gqlname = TokenStream2::from_str(&name2).unwrap();            
-            let mut out_extend = quote!();
-            let mut from_extend = quote!();
-            for variant in e.variants.iter() {
-                let v = &variant.ident;
-                out_extend.extend::<TokenStream2>(quote!{
-                    #v,
-                });
-                from_extend.extend::<TokenStream2>(quote!{
-                    #name::#v => #gqlname::#v,
-                });
-            }
-            let out = quote!{
-                #[derive(GraphQLEnum)]
-                pub enum #gqlname {
-                    #out_extend
-                }
-                impl From<#name> for #gqlname {
-                    fn from(e: #name) -> #gqlname {
-                        match e {
-                            #from_extend
-                        }
+fn recursive_find_path(use_path: &UsePath, ident: &Ident) -> Option<String> {
+    // println!("{} {}",use_path.ident,ident);
+    if use_path.ident == *ident {
+        // println!("found path: {}",use_path.to_token_stream().to_string());
+        Some(use_path.to_token_stream().to_string())
+    } else {
+        if let use_tree = use_path.tree.as_ref() {
+            // println!("tree: {}",use_tree.to_token_stream().to_string());
+            // println!("{:?}",use_tree);
+            match use_tree {
+                UseTree::Path(use_path) => recursive_find_path(use_path, ident),
+                UseTree::Name(use_name) => {
+                    if use_name.ident == *ident {
+                        // println!("found path: {}",use_name.to_token_stream().to_string());
+                        Some(use_name.to_token_stream().to_string())
+                    } else {
+                        // println!("not found");
+                        None
                     }
                 }
-            };
-            println!("{}",out);
-            return out.into()
-
-        }
-        _ => return output,
-    };
-
-    // Build the trait implementation
-    impl_ground(&name,&fields)
+                _ => None,
+            }
+        } else {
+            // println!("no tree");
+            None
+        }        
+    }
 }
 
-fn impl_ground(name: &syn::Ident, syn_fields: &syn::Fields) -> TokenStream {
-    let name2 = format!("Gql{}",name);
-
-    let gqlname = TokenStream2::from_str(&name2).unwrap();
-
-    let mut strukt_stream = TokenStream2::default();
-    let mut from_stream = TokenStream2::default();
-    let mut tuple_stream = TokenStream2::default();
-
-    if let syn::Fields::Named(FieldsNamed{named, .. }) = syn_fields {
-        let fields = named.iter().map(|f| &f.ident);
-        let ftypes = named.iter().map(|f| &f.ty);
-
-        // for ft in ftypes.clone().into_iter() {
-        //     println!{"{:?}",ft};
-        // }
-
-        for (field, ftype) in fields.into_iter().zip(ftypes.into_iter()) {
-            strukt_stream.extend::<TokenStream2>(
-                quote!{#field: }
-            );
-            from_stream.extend::<TokenStream2>(
-                quote!{#field: }
-            );
-            let (strukt_extend,from_extend,tuple_extend) = match_types(field,ftype);
-            strukt_stream.extend::<TokenStream2>(
-                quote!{#strukt_extend,}
-            );
-            from_stream.extend::<TokenStream2>(
-                quote!{#from_extend,}
-            );
-            tuple_stream.extend::<TokenStream2>(
-                tuple_extend
-            )
+fn find_path(file_ast: syn::File, ident: &Ident) -> Option<String> {
+    for item in file_ast.items.clone() {
+        match item {
+            Item::Use(item_use) => {
+                if let UseTree::Path(use_path) = item_use.tree {
+                    match recursive_find_path(&use_path, ident) {
+                        Some(_) => return Some(use_path.to_token_stream().to_string()),
+                        None => (),
+                    }
+                }
+            },
+            _ => (),
         }
     }
-
-    let gen = quote! {
-        #tuple_stream
-
-        #[derive(GraphQLObject,Deserialize,Serialize)]
-        pub struct #gqlname {
-            #strukt_stream
-        }
-        
-        impl From<#name> for #gqlname {
-            fn from(n: #name) -> #gqlname {
-                #gqlname {
-                    #from_stream
-                }
-            }
-        }
-    };
-
-    println!("{}",gen);
-    gen.into()
+    None
 }
 
-fn match_types(
-    field: &Option<syn::Ident>,
-    ftype: &syn::Type,
-) -> (TokenStream2, TokenStream2, TokenStream2) {
-    let mut strukt_stream_extend = TokenStream2::default();
-    let mut from_stream_extend = TokenStream2::default();
-    let mut tuple_stream_extend = TokenStream2::default();
+fn find_struct_or_enum_definition(ident: &Ident) -> Option<Item> {
+    // Get the file path of the current module - fix this to /src/service.rs for now
+    let module_path = std::path::Path::new(&std::env::current_dir().unwrap()).join("src").join("service.rs");
+    // println!("{:?}",module_path);
+    let file_content = std::fs::read_to_string(module_path).unwrap();    
+    // Parse the file into a Syn abstract syntax tree (AST)
+    let file_ast = syn::parse_file(&file_content).unwrap();
+    // println!("file_ast: {:?}",file_ast);
 
-    match ftype {
-        Type::Path(type_path) => {
-            match type_path.clone().path.segments.first().unwrap().ident.to_string().as_str() {
-                "u8" => {
-                    strukt_stream_extend = quote!{i32};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "u16" => {
-                    strukt_stream_extend = quote!{i32};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "u32" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "u64" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "i8" => {
-                    strukt_stream_extend = quote!{i32};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "i16" => {
-                    strukt_stream_extend = quote!{i32};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "i32" => {
-                    strukt_stream_extend = quote!{i32};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "i64" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "usize" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "isize" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "f32" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "f64" => {
-                    strukt_stream_extend = quote!{f64};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "bool" => {
-                    strukt_stream_extend = quote!{bool};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "String" => {
-                    strukt_stream_extend = quote!{String};
-                    from_stream_extend = quote!{n.#field.into()};
-                }
-                "&str" => {
-                    strukt_stream_extend = quote!{String};
-                    from_stream_extend = quote!{n.#field.to_string()};
-                }
-                "Vec" => {                   
-                    let (gqltyp,_,_) = match &type_path.clone().path.segments.first().unwrap().arguments{
-                        PathArguments::AngleBracketed(a) => match a.args.first().unwrap() {
-                            GenericArgument::Type(f) => match_types(field,f),     
-                            _ => todo!(),                       
-                        }                        
-                        _ => todo!(),
-                    };
-                    from_stream_extend = quote!{
-                        {
-                            let mut v: Vec<#gqltyp> = Vec::new();
-                            for i in n.#field.iter()  {
-                                v.push(<#gqltyp>::from(*i));
+    match find_path(file_ast.clone(), ident) {
+        Some(path) => {
+            // println!("path: {}",path);
+            if path.contains("crate ::") {
+                let path = path.split("::").collect::<Vec<&str>>();
+                let krate = path[path.len()-2];                
+                // println!("{}",krate);
+                let module_path = std::path::Path::new(&std::env::current_dir().unwrap()).join("src").join((String::from(krate)+".rs").replace(" ",""));
+                // println!("{:?}",module_path);
+                let file_content = std::fs::read_to_string(module_path).unwrap();
+                let file_ast = syn::parse_file(&file_content).unwrap();
+                // println!("here");
+                
+                for item in file_ast.items {
+                    match item {
+                        Item::Struct(item_struct) => {
+                            if item_struct.ident == *ident {
+                                return Some(Item::Struct(item_struct));
                             }
-                            v
-                        }
-                    };
-                    strukt_stream_extend = quote!{Vec<#gqltyp>};
-                }
-                _ => {        
-                    let f = type_path.clone().into_token_stream();
-                    let name2 = format!("Gql{}",f);
-                    let gqlname = TokenStream2::from_str(&name2).unwrap();          
-                    strukt_stream_extend = quote!{#gqlname};
-                    from_stream_extend = quote!{n.#field.into()};
-                }                
-            }      
-        }
-        // Tuple Type not implemented in GraphQL Object
-        // Convert tuple to struct 
-        Type::Tuple(type_tuple) => {
-            from_stream_extend = quote!{n.#field.into()};            
-            let mut gqlfields = TokenStream2::default();
-            let mut elements = TokenStream2::default();
-            let mut from_tuple = TokenStream2::default();
-            let mut i: usize = 0;
-            for elem in type_tuple.elems.iter() {
-                let (gqlfield,_,_) = match_types(field,elem);
-                gqlfields.extend::<TokenStream2>(TokenStream2::from_str(&format!("t_{}: {}",i,gqlfield)).unwrap());                                
-                elements.extend::<TokenStream2>(quote!{#elem});
-                if Some(elem) != type_tuple.elems.last() {
-                    gqlfields.extend::<TokenStream2>(quote!{,});
-                    elements.extend::<TokenStream2>(quote!{,});
-                }
-                // let tunder = TokenStream2::from_str(&format!("t_{}:",i)).unwrap();
-                // let tdot = TokenStream2::from_str(&format!("t.{}",i)).unwrap();
-                from_tuple.extend::<TokenStream2>(TokenStream2::from_str(&format!("t_{}: t.{}.into(),",i,i)).unwrap());
-                i = i+1;
-            }
-            let gqlstruct = TokenStream2::from_str(&format!("Gql{}",field.clone().unwrap().to_string())).unwrap();            
-            strukt_stream_extend = quote!{#gqlstruct};
-            tuple_stream_extend = quote!{
-                #[derive(GraphQLObject)]
-                pub struct #gqlstruct {
-                    #gqlfields
-                }
-                impl From<(#elements)> for #gqlstruct {
-                    fn from(t: (#elements)) -> #gqlstruct {
-                        #gqlstruct {
-                            #from_tuple
-                        }
+                        },
+                        Item::Enum(item_enum) => {
+                            if item_enum.ident == *ident {
+                                return Some(Item::Enum(item_enum));
+                            }
+                        },
+                        _ => (),
                     }
                 }
-            };
-        }
-        Type::Array(type_array) => {          
-            let typ = &type_array.elem;
-            let (gqltyp,_,_) = match_types(field,typ);
-            strukt_stream_extend = quote!{Vec<#gqltyp>};
-            if let syn::Expr::Lit(expr_lit) = &type_array.len {
-                from_stream_extend = quote!{
-                    {
-                        let mut v: Vec<#gqltyp> = Vec::new();
-                        for i in 0..#expr_lit {
-                            v.push(n.#field[i].into());
+                None
+            } else if path.contains(ident.to_string().as_str()) {
+                let package = Some(path.split("::").collect::<Vec<&str>>()[0].replace("_","-").trim_end().to_string());
+                read_from_git_dependency(package,ident)
+            } else {
+                read_from_git_dependency(None,ident)
+            }
+        },
+        None => read_from_git_dependency(None,ident),
+    }
+}
+
+fn find_in_git(package: &Package, ident: &syn::Ident) -> Option<Item> {
+    // Get path to git dependency crate
+    let directory = package.manifest_path.parent().unwrap().as_std_path();
+
+    // println!("searching in: {:?}",directory);
+    match search_files(&directory, ident) {
+        Ok(item) => Some(item),
+        Err(_) => None,
+    }
+}
+
+fn search_files(directory: &std::path::Path, ident: &syn::Ident) -> std::result::Result<Item,Box<dyn std::error::Error>> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        // Skip all dependencies from crates.io in the `/root/.cargo/registry` directory
+        if path.starts_with("/root/.cargo/registry") {
+            continue;
+        } else if path.is_dir() {
+            //Recurse into subdirectory
+            if let Ok(item) = search_files(&path, ident) {
+                return Ok(item);
+            }
+        } else if path.extension().map(|ext| ext == "rs").unwrap_or(false) {
+            // println!("searching in: {:?}",path);
+            // Parse source files
+            let file_content = std::fs::read_to_string(path.clone())?;
+            let file_ast = syn::parse_file(&file_content)?;
+
+            for item in file_ast.items {
+                match item {
+                    Item::Struct(item_struct) => {
+                        if item_struct.ident == *ident {
+                            // println!("found in: {:?}",path);
+                            return Ok(Item::Struct(item_struct));
                         }
-                        v
-                    }
-                };
+                    },
+                    Item::Enum(item_enum) => {
+                        if item_enum.ident == *ident {
+                            // println!("found in: {:?}",path);
+                            return Ok(Item::Enum(item_enum));
+                        }
+                    },
+                    _ => (),
+                }
             }
         }
-        _ => {}                    
-    };
-    (strukt_stream_extend,from_stream_extend,tuple_stream_extend)
+    }
+    Err("not found".into())
+}
+
+fn read_from_git_dependency(package_name: Option<String>, ident: &syn::Ident) -> Option<Item> {
+    // Get path to Cargo.toml
+    let manifest_path = std::env::current_dir().unwrap().join("Cargo.toml");
+    // Load Cargo project metadata
+    let metadata: Metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(manifest_path)
+        .exec()
+        .unwrap();
+
+    // Iterate over all dependencies
+    for package in metadata.packages {        
+        if package_name.is_some() && package.name != package_name.clone().unwrap() {
+            continue;
+        }
+        // println!("package: {:?}",package.name);
+        match find_in_git(&package, ident) {
+            Some(item) => return Some(item),
+            None => (),
+        }
+        // // if package.source.is_some() && package.source.as_ref().unwrap().is_git() && package.name == ident.to_string() {
+        // if package.source.is_some() {            
+            
+        // }
+    }
+    None
+}
+
+fn handle_ident(ident: TokenStream2,depth: usize) -> Option<String> {
+    find_struct_or_enum_definition(&parse2::<Ident>(ident.clone()).unwrap()).map(|item| {
+        match item {
+            Item::Struct(item_struct) => {
+                handle_struct(item_struct,depth)                
+            },
+            Item::Enum(item_enum) => {
+                handle_enum(item_enum,depth)
+            },
+            _ => {
+                None
+            }
+        }
+    }).unwrap()
+}
+
+fn handle_struct_fields(item_struct: ItemStruct, depth: usize) -> String {
+    let mut field_streams = String::new();
+    for field in item_struct.fields {
+        let field_name = field.clone().ident.unwrap();
+        let field_type = match field.clone().ty {
+            syn::Type::Path(path) => {
+                match_name(&path,depth-1)
+            },
+            _ => Some("".to_string()),
+        };
+        field_streams.push_str(format!{"{}{}: {},\n","\t".repeat(depth),field_name,field_type.unwrap()}.as_str());
+    }
+    field_streams
+}
+
+fn handle_struct(item_struct: ItemStruct, depth: usize) -> Option<String> {
+    let struct_name = item_struct.clone().ident;
+    let struct_fields = handle_struct_fields(item_struct.clone(),depth+1);
+    Some(format!("{} {{\n{}{}}}",struct_name,struct_fields,"\t".repeat(depth)))
+}
+
+fn handle_enum(item_enum: ItemEnum, depth: usize) -> Option<String> {
+    let enum_name = item_enum.clone().ident;
+    let enum_variants = item_enum.clone().variants;
+    Some(format!("{} {{\n{}\n{}}}",
+        enum_name,
+        enum_variants.into_iter().map(|variant| {
+            format!("{}{},","\t".repeat(depth+1),variant.ident)}).collect::<Vec<String>>().join("\n"),
+        "\t".repeat(depth),
+    ))
 }
