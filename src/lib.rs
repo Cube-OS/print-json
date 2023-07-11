@@ -64,7 +64,8 @@ pub fn print_json(input: TokenStream) -> TokenStream {
     }
     
     commands.push_str(&format!("{}\n", remove_duplicates(&enumstruct)));
-    // println!("{}", commands);
+    #[cfg(feature = "debug")]
+    println!("{}", commands);
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -117,6 +118,8 @@ fn arguments(path: TypePath) -> (String,Option<String>) {
 }
 
 fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Option<String>,Option<String>) {
+    #[cfg(feature = "debug")]
+    println!("{},{}", type_path.clone().path.segments.first().unwrap().ident.to_string(),enumstruct.clone());
     let depth = depth + 1;
     match type_path.clone().path.segments.first().unwrap().ident.to_string().as_str() {
         "u8" => {
@@ -166,6 +169,8 @@ fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Op
                 }                        
                 _ => todo!(),
             };
+            #[cfg(feature = "debug")]
+            println!("{:?}", arg.clone());
             enumstruct.push_str(&typ.unwrap_or_else(|| "".to_string()));
             (Some(format!("Vec<{}>",arg.unwrap())),Some(enumstruct))
         }
@@ -180,6 +185,8 @@ fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Op
                 }                        
                 _ => todo!(),
             };
+            #[cfg(feature = "debug")]
+            println!("{:?}", arg.clone());
             enumstruct.push_str(&typ.unwrap_or_else(|| "".to_string()));
             (Some(format!("Option<{}>",arg.unwrap())),Some(enumstruct))
         }
@@ -192,21 +199,33 @@ fn match_name(type_path: &TypePath, depth: usize, mut enumstruct: String) -> (Op
 
 fn recursive_find_path(use_path: &UsePath, ident: &Ident) -> Option<String> {
     if use_path.ident == *ident {
+        #[cfg(feature = "debug")]
+        println!("Found path: {}", use_path.to_token_stream().to_string());
         Some(use_path.to_token_stream().to_string())
     } else {
         if let use_tree = use_path.tree.as_ref() {            
             match use_tree {
                 UseTree::Path(use_path) => recursive_find_path(use_path, ident),
                 UseTree::Name(use_name) => {
-                    if use_name.ident == *ident {                        
+                    if use_name.ident == *ident {    
+                        #[cfg(feature = "debug")]
+                        println!("Found path: {}", use_name.to_token_stream().to_string());                    
                         Some(use_name.to_token_stream().to_string())
-                    } else {                        
+                    } else {          
+                        #[cfg(feature = "debug")]
+                        println!("Name not found: {}", use_name.to_token_stream().to_string());              
                         None
                     }
                 }
-                _ => None,
+                _ => {
+                    #[cfg(feature = "debug")]
+                    println!("Tree not found: {}", use_tree.to_token_stream().to_string());
+                    None
+                }
             }
         } else {
+            #[cfg(feature = "debug")]
+            println!("Not found");
             None
         }        
     }
@@ -218,7 +237,11 @@ fn find_path(file_ast: syn::File, ident: &Ident) -> Option<String> {
             Item::Use(item_use) => {
                 if let UseTree::Path(use_path) = item_use.tree {
                     match recursive_find_path(&use_path, ident) {
-                        Some(_) => return Some(use_path.to_token_stream().to_string()),
+                        Some(_) => {
+                            #[cfg(feature = "debug")]
+                            println!("Found path: {}", use_path.to_token_stream().to_string());
+                            return Some(use_path.to_token_stream().to_string())
+                        }
                         None => (),
                     }
                 }
@@ -238,9 +261,13 @@ fn find_struct_or_enum_definition(ident: &Ident) -> Option<Item> {
 
     match find_path(file_ast.clone(), ident) {
         Some(path) => {
+            #[cfg(feature = "debug")]
+            println!("Found path: {}",path);
             if path.contains("crate ::") {
                 let path = path.split("::").collect::<Vec<&str>>();
                 let krate = path[path.len()-2];                                
+                #[cfg(feature = "debug")]
+                println!("crate: {}", krate);
                 let module_path = std::path::Path::new(&std::env::current_dir().unwrap()).join("src").join((String::from(krate)+".rs").replace(" ",""));
                 let file_content = std::fs::read_to_string(module_path).unwrap();
                 let file_ast = syn::parse_file(&file_content).unwrap();
@@ -249,11 +276,15 @@ fn find_struct_or_enum_definition(ident: &Ident) -> Option<Item> {
                     match item {
                         Item::Struct(item_struct) => {
                             if item_struct.ident == *ident {
+                                #[cfg(feature = "debug")]
+                                println!("{}", item_struct.to_token_stream().to_string());
                                 return Some(Item::Struct(item_struct));
                             }
                         },
                         Item::Enum(item_enum) => {
                             if item_enum.ident == *ident {
+                                #[cfg(feature = "debug")]
+                                println!("{}", item_enum.to_token_stream().to_string());
                                 return Some(Item::Enum(item_enum));
                             }
                         },
@@ -304,11 +335,15 @@ fn search_files(directory: &std::path::Path, ident: &syn::Ident) -> std::result:
                 match item {
                     Item::Struct(item_struct) => {
                         if item_struct.ident == *ident {
+                            #[cfg(feature = "debug")]
+                            println!("{}", item_struct.to_token_stream().to_string());
                             return Ok(Item::Struct(item_struct));
                         }
                     },
                     Item::Enum(item_enum) => {
                         if item_enum.ident == *ident {
+                            #[cfg(feature = "debug")]
+                            println!("{}", item_enum.to_token_stream().to_string());
                             return Ok(Item::Enum(item_enum));
                         }
                     },
@@ -335,8 +370,15 @@ fn read_from_git_dependency(package_name: Option<String>, ident: &syn::Ident) ->
             continue;
         }
         match find_in_git(&package, ident) {
-            Some(item) => return Some(item),
-            None => (),
+            Some(item) => {
+                #[cfg(feature = "debug")]
+                println!("{} found in {}",ident, package.name);
+                return Some(item)
+            }
+            None => {
+                #[cfg(feature = "debug")]
+                println!("{} not found in {}",ident, package.name);
+            },
         }
         // // if package.source.is_some() && package.source.as_ref().unwrap().is_git() && package.name == ident.to_string() {
         // if package.source.is_some() {            
@@ -386,6 +428,8 @@ fn handle_struct(item_struct: ItemStruct, depth: usize, mut enumstruct: String) 
         struct_fields,
     ));
     enumstruct.push_str(&format!("{}",fields_enumstruct.unwrap_or("".to_string())));
+    #[cfg(feature = "debug")]
+    println!("{},{}",struct_name,enumstruct);
     (Some(format!("{}",struct_name)),Some(enumstruct))
     // Some(format!("{} {{\n{}{}}}",struct_name,struct_fields,"\t".repeat(depth)))
 }
@@ -398,6 +442,8 @@ fn handle_enum(item_enum: ItemEnum, depth: usize, mut enumstruct: String) -> (Op
         enum_variants.into_iter().map(|variant| {
             format!("\t{},",variant.ident)}).collect::<Vec<String>>().join("\n"),       
     ));
+    #[cfg(feature = "debug")]
+    println!("{},{}",enum_name,enumstruct);
     (Some(format!("{}",enum_name)),Some(enumstruct))
     // Some(format!("{} {{\n{}\n{}}}",
     //     enum_name,
