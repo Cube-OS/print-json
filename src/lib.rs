@@ -51,7 +51,8 @@ pub fn print_json(input: TokenStream) -> TokenStream {
             json.push_str(&format!("{},\n", s));
             if t.is_some() {
                 enumstruct.push_str(&format!("{}",t.unwrap()));
-            }        
+            }
+            enumstruct = remove_duplicates(&enumstruct);        
         }
         
         if !json.is_empty() {
@@ -63,7 +64,7 @@ pub fn print_json(input: TokenStream) -> TokenStream {
         commands.push_str(&format!("{}\n", command));
     }
     
-    commands.push_str(&format!("{}\n", remove_duplicates(&enumstruct)));
+    commands.push_str(&format!("{}\n", enumstruct));
     #[cfg(feature = "debug")]
     println!("{}", commands);
 
