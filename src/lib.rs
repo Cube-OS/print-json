@@ -29,15 +29,17 @@ pub fn print_json(input: TokenStream) -> TokenStream {
     let mut vec_str: Vec<String> = input.split(";").map(|s| s.to_string()).collect();
     vec_str.pop();
 
+
+    #[cfg(not(feature = "toobig"))]
+    parse(&mut vec_str)
+
+    #[cfg(feature = "toobig")]
+    parse_toobig(&mut vec_str)
+}
+
+fn parse(vec_str: &mut Vec<String>) -> TokenStream {    
     let mut enumstruct = String::new();
     let mut commands = String::new();
-
-    let mut file = std::fs::OpenOptions::new()
-    .create(true)
-    .write(true)
-    .truncate(true)
-    .open("commands.json")
-    .expect("Failed to open file");
 
     for mut v in vec_str {       
         let mut input = TokenStream::from_str(&v).unwrap();
@@ -62,78 +64,87 @@ pub fn print_json(input: TokenStream) -> TokenStream {
             }
             enumstruct = remove_duplicates(&enumstruct);        
         }
-
+        
         if !json.is_empty() {
             command.push_str(&format!(" {{\n{}}}\n", json));
         } else {
             command.push_str(" {}\n");
         }
 
-        // commands.push_str(&format!("{}\n", command));
-        writeln!(file, "{}", command).expect("Failed to write to file");
-
-        #[cfg(feature = "debug")]
-        println!("{}", command);
+        commands.push_str(&format!("{}\n", command));
     }
-
-    commands.push_str(&format!("{}\n", enumstruct));
-    writeln!(file, "{}", enumstruct).expect("Failed to write to file");
-
+    
+    commands.push_str(&format!("{}\n", remove_duplicates(&enumstruct)));
     #[cfg(feature = "debug")]
     println!("{}", commands);
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("commands.json")
+        .expect("Failed to open file");
+
+    write!(file, "{}", commands).expect("Failed to write to file");
+    // write!(file, "{}", enumstruct).expect("Failed to write to file");
 
     TokenStream::new()
 }
 
-    // for mut v in vec_str {       
-    //     let mut input = TokenStream::from_str(&v).unwrap();
-    //     let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
-    //     let mut args = parser.parse(input).unwrap();
+fn parse_toobig(vec_str: &mut Vec<String>) -> TokenStream {
+    let mut enumstruct = String::new();
 
-    //     let mut vec = args.into_iter().collect::<Vec<_>>();      
-        
-    //     let mut command = "# struct ".to_string();
-        
-    //     command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
-        
-    //     let (name, typ): (Vec<_>,Vec<_>) = vec.into_iter().enumerate().partition(|(i, _)| i % 2 == 0);
-        
-    //     let mut json = String::new();        
-    //     for ((_,n),(_,t)) in name.into_iter().zip(typ.into_iter()) {
-    //         json.push_str(&format!("\t{}: ", n.path.segments.first().unwrap().ident.to_string()));
-    //         let (s,t) = arguments(t);
-    //         json.push_str(&format!("{},\n", s));
-    //         if t.is_some() {
-    //             enumstruct.push_str(&format!("{}",t.unwrap()));
-    //         }
-    //         enumstruct = remove_duplicates(&enumstruct);        
-    //     }
-        
-    //     if !json.is_empty() {
-    //         command.push_str(&format!(" {{\n{}}}\n", json));
-    //     } else {
-    //         command.push_str(" {}\n");
-    //     }
+    for v in vec_str {
+        let mut input = TokenStream::from_str(&v).unwrap();
+        let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
+        let mut args = parser.parse(input).unwrap();
 
-    //     commands.push_str(&format!("{}\n", command));
-    // }
-    
-    // commands.push_str(&format!("{}\n", enumstruct));
-    // #[cfg(feature = "debug")]
-    // println!("{}", commands);
+        let mut vec = args.into_iter().collect::<Vec<_>>();      
+        
+        let mut command = "# struct ".to_string();
+        
+        command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
+        
+        let (name, typ): (Vec<_>,Vec<_>) = vec.into_iter().enumerate().partition(|(i, _)| i % 2 == 0);
+        
+        let mut json = String::new();        
+        for ((_,n),(_,t)) in name.into_iter().zip(typ.into_iter()) {
+            json.push_str(&format!("\t{}: ", n.path.segments.first().unwrap().ident.to_string()));
+            let (s,t) = arguments(t);
+            json.push_str(&format!("{},\n", s));
+            if t.is_some() {
+                enumstruct.push_str(&format!("{}",t.unwrap()));
+            }
+            enumstruct = remove_duplicates(&enumstruct);        
+        }
+        
+        if !json.is_empty() {
+            command.push_str(&format!(" {{\n{}}}\n", json));
+        } else {
+            command.push_str(" {}\n");
+        }
 
-    // let mut file = std::fs::OpenOptions::new()
-    //     .create(true)
-    //     .write(true)
-    //     .truncate(true)
-    //     .open("commands.json")
-    //     .expect("Failed to open file");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            // .truncate(true)
+            .open(format!("{}.json",v))
+            .expect("Failed to open file");
 
-    // write!(file, "{}", commands).expect("Failed to write to file");
-    // // write!(file, "{}", enumstruct).expect("Failed to write to file");
+        write!(file, "{}", commands).expect("Failed to write to file");
+        file.close();
+    }
 
-    // TokenStream::new()
-// }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("commands.json")
+        .expect("Failed to open file");
+    write!(file, "{}", enumstruct).expect("Failed to write to file");
+
+    TokenStream::new()
+}
 
 fn remove_duplicates(s: &str) -> String {
     let mut items: Vec<syn::Item> = syn::parse_file(s).unwrap().items;
