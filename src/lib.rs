@@ -31,13 +31,15 @@ pub fn print_json(input: TokenStream) -> TokenStream {
 
 
     #[cfg(not(feature = "toobig"))]
-    parse(&mut vec_str)
+    parse(&mut vec_str);
 
     #[cfg(feature = "toobig")]
-    parse_toobig(&mut vec_str)
+    parse_toobig(&mut vec_str);
+
+    TokenStream::new()
 }
 
-fn parse(vec_str: &mut Vec<String>) -> TokenStream {    
+fn parse(vec_str: &mut Vec<String>) {    
     let mut enumstruct = String::new();
     let mut commands = String::new();
 
@@ -87,11 +89,9 @@ fn parse(vec_str: &mut Vec<String>) -> TokenStream {
 
     write!(file, "{}", commands).expect("Failed to write to file");
     // write!(file, "{}", enumstruct).expect("Failed to write to file");
-
-    TokenStream::new()
 }
 
-fn parse_toobig(vec_str: &mut Vec<String>) -> TokenStream {
+fn parse_toobig(vec_str: &mut Vec<String>) {
     let mut enumstruct = String::new();
 
     for v in vec_str {
@@ -131,8 +131,7 @@ fn parse_toobig(vec_str: &mut Vec<String>) -> TokenStream {
             .open(format!("{}.json",v))
             .expect("Failed to open file");
 
-        write!(file, "{}", commands).expect("Failed to write to file");
-        file.close();
+        write!(file, "{}", command).expect("Failed to write to file");
     }
 
     let mut file = std::fs::OpenOptions::new()
@@ -142,8 +141,6 @@ fn parse_toobig(vec_str: &mut Vec<String>) -> TokenStream {
         .open("commands.json")
         .expect("Failed to open file");
     write!(file, "{}", enumstruct).expect("Failed to write to file");
-
-    TokenStream::new()
 }
 
 fn remove_duplicates(s: &str) -> String {
