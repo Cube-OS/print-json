@@ -93,8 +93,10 @@ fn parse(vec_str: &mut Vec<String>) {
 
 fn parse_toobig(vec_str: &mut Vec<String>) {
     let mut enumstruct = String::new();
+    let mut i = 0u16;
 
     for v in vec_str {
+        i+=1;
         let mut input = TokenStream::from_str(&v).unwrap();
         let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
         let mut args = parser.parse(input).unwrap();
@@ -128,7 +130,7 @@ fn parse_toobig(vec_str: &mut Vec<String>) {
             .create(true)
             .write(true)
             // .truncate(true)
-            .open(format!("{}.json",v))
+            .open(format!("{}.json",i))
             .expect("Failed to open file");
 
         write!(file, "{}", command).expect("Failed to write to file");
