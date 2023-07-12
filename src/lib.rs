@@ -92,7 +92,7 @@ fn parse(vec_str: &mut Vec<String>) {
 }
 
 fn parse_toobig(vec_str: &mut Vec<String>) {
-    let mut enumstruct = String::new();
+    
     let mut i = 0u16;
 
     for v in vec_str {
@@ -104,6 +104,7 @@ fn parse_toobig(vec_str: &mut Vec<String>) {
         let mut vec = args.into_iter().collect::<Vec<_>>();      
         
         let mut command = "# struct ".to_string();
+        let mut enumstruct = String::new();
         
         command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
         
@@ -134,15 +135,8 @@ fn parse_toobig(vec_str: &mut Vec<String>) {
             .expect("Failed to open file");
 
         write!(file, "{}", command).expect("Failed to write to file");
+        write!(file, "{}", enumstruct).expect("Failed to write to file");
     }
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open("commands.json")
-        .expect("Failed to open file");
-    write!(file, "{}", enumstruct).expect("Failed to write to file");
 }
 
 fn remove_duplicates(s: &str) -> String {
