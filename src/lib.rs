@@ -29,12 +29,7 @@ pub fn print_json(input: TokenStream) -> TokenStream {
     let mut vec_str: Vec<String> = input.split(";").map(|s| s.to_string()).collect();
     vec_str.pop();
 
-
-    #[cfg(not(feature = "toobig"))]
     parse(&mut vec_str);
-
-    #[cfg(feature = "toobig")]
-    parse_toobig(&mut vec_str);
 
     TokenStream::new()
 }
@@ -89,54 +84,6 @@ fn parse(vec_str: &mut Vec<String>) {
 
     write!(file, "{}", commands).expect("Failed to write to file");
     // write!(file, "{}", enumstruct).expect("Failed to write to file");
-}
-
-fn parse_toobig(vec_str: &mut Vec<String>) {
-    
-    let mut i = 0u16;
-
-    for v in vec_str {
-        i+=1;
-        let mut input = TokenStream::from_str(&v).unwrap();
-        let parser = Punctuated::<TypePath, Token![,]>::parse_terminated;
-        let mut args = parser.parse(input).unwrap();
-
-        let mut vec = args.into_iter().collect::<Vec<_>>();      
-        
-        let mut command = "# struct ".to_string();
-        let mut enumstruct = String::new();
-        
-        command.push_str(&vec.remove(0).path.segments.first().unwrap().ident.to_string());
-        
-        let (name, typ): (Vec<_>,Vec<_>) = vec.into_iter().enumerate().partition(|(i, _)| i % 2 == 0);
-        
-        let mut json = String::new();        
-        for ((_,n),(_,t)) in name.into_iter().zip(typ.into_iter()) {
-            json.push_str(&format!("\t{}: ", n.path.segments.first().unwrap().ident.to_string()));
-            let (s,t) = arguments(t);
-            json.push_str(&format!("{},\n", s));
-            if t.is_some() {
-                enumstruct.push_str(&format!("{}",t.unwrap()));
-            }
-            enumstruct = remove_duplicates(&enumstruct);        
-        }
-        
-        if !json.is_empty() {
-            command.push_str(&format!(" {{\n{}}}\n", json));
-        } else {
-            command.push_str(" {}\n");
-        }
-
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            // .truncate(true)
-            .open(format!("{}.json",i))
-            .expect("Failed to open file");
-
-        write!(file, "{}", command).expect("Failed to write to file");
-        write!(file, "{}", enumstruct).expect("Failed to write to file");
-    }
 }
 
 fn remove_duplicates(s: &str) -> String {
